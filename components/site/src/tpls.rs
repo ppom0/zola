@@ -98,4 +98,6 @@ pub fn register_tera_global_fns(site: &mut Site) {
             site.library.clone(),
         ),
     );
+    site.tera
+        .register_function("save_as_file", global_fns::SaveAsFile::new(site.output_path.clone()));
 }

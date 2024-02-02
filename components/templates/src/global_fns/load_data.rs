@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
+use libs::base64::engine::{general_purpose::STANDARD as standard_b64, Engine as _};
 use libs::csv::Reader;
 use libs::reqwest::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_TYPE};
 use libs::reqwest::{blocking::Client, header};
@@ -41,6 +42,7 @@ impl FromStr for Method {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum OutputFormat {
+    Base64,
     Toml,
     Json,
     Csv,
@@ -55,6 +57,7 @@ impl FromStr for OutputFormat {
 
     fn from_str(output_format: &str) -> Result<Self> {
         match output_format.to_lowercase().as_ref() {
+            "base64" => Ok(OutputFormat::Base64),
             "toml" => Ok(OutputFormat::Toml),
             "csv" => Ok(OutputFormat::Csv),
             "json" => Ok(OutputFormat::Json),
@@ -76,6 +79,7 @@ impl OutputFormat {
             OutputFormat::Bibtex => "application/x-bibtex",
             OutputFormat::Xml => "text/xml",
             OutputFormat::Plain => "text/plain",
+            OutputFormat::Base64 => "application/octet-stream",
             OutputFormat::Yaml => "application/x-yaml",
         })
     }
@@ -361,9 +365,18 @@ impl TeraFn for LoadData {
                 };
 
                 match req.send().and_then(|res| res.error_for_status()) {
-                    Ok(r) => r.text().map_err(|e| {
-                        format!("`load_data`: Failed to parse response from {}: {:?}", url, e)
-                    }),
+                    Ok(r) => match file_format {
+                        OutputFormat::Base64 => match r.bytes() {
+                            Ok(v) => Ok(standard_b64.encode(v)),
+                            Err(e) => Err(format!(
+                                "`load_data`: Failed to load response from {}: {:?}",
+                                url, e
+                            )),
+                        },
+                        _ => r.text().map_err(|e| {
+                            format!("`load_data`: Failed to parse response from {}: {:?}", url, e)
+                        }),
+                    },
                     Err(e) => {
                         if !required {
                             // HTTP error is discarded (because required=false) and
@@ -392,7 +405,7 @@ impl TeraFn for LoadData {
             OutputFormat::Bibtex => load_bibtex(data),
             OutputFormat::Xml => load_xml(data),
             OutputFormat::Yaml => load_yaml(data),
-            OutputFormat::Plain => to_value(data).map_err(|e| e.into()),
+            OutputFormat::Plain | OutputFormat::Base64 => to_value(data).map_err(|e| e.into()),
         };
 
         if let Ok(data_result) = &result_value {
